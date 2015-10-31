@@ -10,6 +10,16 @@ require 'openssl'
 # bundle config build.pg --with-pg-config=<path to pg_config>
 # bundle install
 
+endpoints = {
+  "ken": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/%s" },
+  "ken2": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/" },
+  "surname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/surname" },
+  "givenname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/givenname" },
+  "tenki": { :token_type => :param, :token_key => "zipcode", :uri => "http://api.five-final.isucon.net:8988/" },
+  "perfectsec": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/tokens" },
+  "perfectsec_attacked": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/attacked_list" },
+}.freeze
+
 module Isucon5f
   module TimeWithoutZone
     def to_s
@@ -184,17 +194,12 @@ SQL
     redirect '/modify'
   end
 
-  def fetch_api(method, uri, headers, params)
+  def fetch_api(uri, headers, params)
     client = HTTPClient.new
     if uri.start_with? "https://"
       client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_NONE
     end
-    fetcher = case method
-              when 'GET' then client.method(:get_content)
-              when 'POST' then client.method(:post_content)
-              else
-                raise "unknown method #{method}"
-              end
+    fetcher = client.method(:get_content)
     res = fetcher.call(uri, params, headers)
     JSON.parse(res)
   end
@@ -210,8 +215,9 @@ SQL
     data = []
 
     arg.each_pair do |service, conf|
-      row = db.exec_params("SELECT meth, token_type, token_key, uri FROM endpoints WHERE service=$1", [service]).values.first
-      method, token_type, token_key, uri_template = row
+      token_type = endpoints[service][:token_type]
+      token_key = endpoints[service][:token_key]
+      uri_template = endpoints[service][:uri]
       headers = {}
       params = (conf['params'] && conf['params'].dup) || {}
       case token_type
@@ -219,7 +225,7 @@ SQL
       when 'param' then params[token_key] = conf['token']
       end
       uri = sprintf(uri_template, *conf['keys'])
-      data << {"service" => service, "data" => fetch_api(method, uri, headers, params)}
+      data << {"service" => service, "data" => fetch_api(uri, headers, params)}
     end
 
     json data
