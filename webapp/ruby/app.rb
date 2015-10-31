@@ -6,9 +6,20 @@ require 'erubis'
 require 'json'
 require 'httpclient'
 require 'openssl'
+require 'parallel'
 
 # bundle config build.pg --with-pg-config=<path to pg_config>
 # bundle install
+
+$endpoints = {
+  "ken": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/%s", :priority => 1 },
+  "ken2": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/", :priority => 1 },
+  "surname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/surname", :priority => 1 },
+  "givenname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/givenname", :priority => 1 },
+  "tenki": { :token_type => 'param', :token_key => "zipcode", :uri => "http://api.five-final.isucon.net:8988/", :priority => 2 },
+  "perfectsec": { :token_type => 'header', :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/tokens", :priority => 0 },
+  "perfectsec_attacked": { :token_type => 'header', :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/attacked_list", :priority => 2  },
+}.freeze
 
 module Isucon5f
   module TimeWithoutZone
@@ -17,15 +28,6 @@ module Isucon5f
     end
   end
   ::Time.prepend TimeWithoutZone
-  $endpoints = {
-    "ken": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/%s" },
-    "ken2": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/" },
-    "surname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/surname" },
-    "givenname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/givenname" },
-    "tenki": { :token_type => :param, :token_key => "zipcode", :uri => "http://api.five-final.isucon.net:8988/" },
-    "perfectsec": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/tokens" },
-    "perfectsec_attacked": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/attacked_list" },
-  }.freeze
 end
 
 class Isucon5f::WebApp < Sinatra::Base
@@ -211,21 +213,32 @@ SQL
     arg_json = db.exec_params("SELECT arg FROM subscriptions WHERE user_id=$1", [user[:id]]).values.first[0]
     arg = JSON.parse(arg_json)
 
-    data = []
-
-    arg.each_pair do |service, conf|
+    args = arg.map do |service, conf|
       token_type = $endpoints[service.to_sym][:token_type]
       token_key = $endpoints[service.to_sym][:token_key]
+      priority = $endpoints[service.to_sym][:priority]
       uri_template = $endpoints[service.to_sym][:uri]
       headers = {}
       params = (conf['params'] && conf['params'].dup) || {}
       case token_type
-      when :header then headers[token_key] = conf['token']
-      when :param then params[token_key] = conf['token']
+      when 'header' then headers[token_key] = conf['token']
+      when 'param' then params[token_key] = conf['token']
       end
       uri = sprintf(uri_template, *conf['keys'])
-      data << {"service" => service, "data" => fetch_api(uri, headers, params)}
+      { service: service, uri: uri, headers: headers, params: params, priority: priority }
     end
+    perfectsec = args.select{|a| a[:service] == 'perfectsec' }[0]
+    if perfectsec
+      perfectsec_data = {"service" => perfectsec[:service], "data" => fetch_api(perfectsec[:uri], perfectsec[:headers], perfectsec[:params])}
+    end
+
+    args = args.select{|a| a[:service] != 'perfectsec' }.sort_by {|a| -1 * a[:priority] }
+
+    data = Parallel.map(args, in_threads: 8) do |a|
+      {"service" => a[:service], "data" => fetch_api(a[:uri], a[:headers], a[:params])}
+    end
+
+    data << perfectsec_data if perfectsec_data
 
     json data
   end
