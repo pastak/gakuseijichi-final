@@ -10,16 +10,6 @@ require 'openssl'
 # bundle config build.pg --with-pg-config=<path to pg_config>
 # bundle install
 
-endpoints = {
-  "ken": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/%s" },
-  "ken2": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/" },
-  "surname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/surname" },
-  "givenname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/givenname" },
-  "tenki": { :token_type => :param, :token_key => "zipcode", :uri => "http://api.five-final.isucon.net:8988/" },
-  "perfectsec": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/tokens" },
-  "perfectsec_attacked": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/attacked_list" },
-}.freeze
-
 module Isucon5f
   module TimeWithoutZone
     def to_s
@@ -27,6 +17,15 @@ module Isucon5f
     end
   end
   ::Time.prepend TimeWithoutZone
+  $endpoints = {
+    "ken": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/%s" },
+    "ken2": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8080/" },
+    "surname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/surname" },
+    "givenname": { :token_type => nil, :token_key => nil, :uri => "http://api.five-final.isucon.net:8081/givenname" },
+    "tenki": { :token_type => :param, :token_key => "zipcode", :uri => "http://api.five-final.isucon.net:8988/" },
+    "perfectsec": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/tokens" },
+    "perfectsec_attacked": { :token_type => :header, :token_key => "X-PERFECT-SECURITY-TOKEN", :uri => "https://api.five-final.isucon.net:8443/attacked_list" },
+  }.freeze
 end
 
 class Isucon5f::WebApp < Sinatra::Base
@@ -215,14 +214,14 @@ SQL
     data = []
 
     arg.each_pair do |service, conf|
-      token_type = endpoints[service][:token_type]
-      token_key = endpoints[service][:token_key]
-      uri_template = endpoints[service][:uri]
+      token_type = $endpoints[service.to_sym][:token_type]
+      token_key = $endpoints[service.to_sym][:token_key]
+      uri_template = $endpoints[service.to_sym][:uri]
       headers = {}
       params = (conf['params'] && conf['params'].dup) || {}
       case token_type
-      when 'header' then headers[token_key] = conf['token']
-      when 'param' then params[token_key] = conf['token']
+      when :header then headers[token_key] = conf['token']
+      when :param then params[token_key] = conf['token']
       end
       uri = sprintf(uri_template, *conf['keys'])
       data << {"service" => service, "data" => fetch_api(uri, headers, params)}
